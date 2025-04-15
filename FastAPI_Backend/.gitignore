@@ -3,3 +3,5 @@ venv/
 firebase_key.json
 
 .DS_Store
+
+.env

@@ -41,5 +41,3 @@ async def post_on_app(
             detail=f"Failed to create post: {str(e)}"
         )
 
-
-
