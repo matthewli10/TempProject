@@ -1,8 +1,12 @@
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, Boolean, Enum, JSON
 from sqlalchemy.dialects.postgresql import UUID 
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
 from datetime import datetime
+import firebase_admin 
+from firebase import credentials, firestone
+
 
 Base = declarative_base()
 
@@ -17,12 +21,17 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
 
+
+
 """
 This class represents all posts in our app. 
 """
 # class Post(Base):
 #     __tablename__ = ""
 
+
+class Account(Base):
+    __tablename__ = ""
 
 
 
