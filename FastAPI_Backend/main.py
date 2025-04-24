@@ -118,6 +118,7 @@ def read_current_user(user: User = Depends(get_current_user)):
     return {"email": user.email}
 
 
+
 # -------------- Register user login -----------
 @app.post("/register")
 def register(user_data: UserCreate, db: Session = Depends(get_db)):
