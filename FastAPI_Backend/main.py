@@ -125,12 +125,6 @@ def read_current_user(user: User = Depends(get_current_user)):
     return {"username": user.username, "email": user.email}
 
 
-# -------------------- Root route --------------------
-@app.get("/")
-def root():
-    return {"Hello": "World"}
-
-
 # -------------- Testing postgresql login -----------
 @app.post("/register-dev")
 def create_test_user(db: Session = Depends(get_db)):
