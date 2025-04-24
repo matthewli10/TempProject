@@ -5,11 +5,14 @@ from jose import JWTError, jwt
 from typing import Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from fastapi import Depends
+from sqlalchemy.exc import IntegrityError
 from auth.database import SessionLocal, engine
 from auth.models import User, Base
 from fastapi.openapi.utils import get_openapi
 from dotenv import load_dotenv
+from auth.schemas import UserCreate
+from auth.jwt_utils import create_email_verification_token, create_access_token, SECRET_KEY, ALGORITHM
+from auth.email_verification import send_verification_email
 import os
 
 load_dotenv()
@@ -65,17 +68,6 @@ def hash_password(password: str):
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-# -------------------- JWT config --------------------
-SECRET_KEY = os.getenv("SECRET_KEY")    # env file
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
 
 def get_user(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
@@ -90,13 +82,14 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    user = get_user(db, form_data.username)
+    user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password"
         )
-    token = create_access_token(data={"sub": user.username})
+
+    token = create_access_token(data={"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
 
 # -------------------- Authenticated route --------------------
@@ -110,10 +103,10 @@ def get_current_user(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        email: str = payload.get("sub")
+        if email is None:
             raise credentials_exception
-        user = get_user(db, username)
+        user = db.query(User).filter(User.email == email).first()
         if user is None:
             raise credentials_exception
         return user
@@ -122,17 +115,56 @@ def get_current_user(
 
 @app.get("/me")
 def read_current_user(user: User = Depends(get_current_user)):
-    return {"username": user.username, "email": user.email}
+    return {"email": user.email}
 
 
-# -------------- Testing postgresql login -----------
-@app.post("/register-dev")
-def create_test_user(db: Session = Depends(get_db)):
-    user = User(
-        username="testuser",
-        email="test@example.com",
-        hashed_password=hash_password("testpass")
+
+# -------------- Register user login -----------
+@app.post("/register")
+def register(user_data: UserCreate, db: Session = Depends(get_db)):
+    # Check if email already exists
+    if db.query(User).filter(User.email == user_data.email).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    # Create new user
+    new_user = User(
+        email=user_data.email,
+        hashed_password=hash_password(user_data.password),
+        is_verified=False 
     )
-    db.add(user)
+
+    db.add(new_user)
     db.commit()
-    return {"msg": "User created"}
+
+    # Create token + send email
+    token = create_email_verification_token(new_user.email)
+    send_verification_email(new_user.email, token)
+
+    return {"msg": "Registration successful. Please check your email to verify your account."}
+
+
+# -------------------- Email verification -------------------------
+@app.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_verified:
+        return {"msg": "Email already verified"}
+
+    user.is_verified = True
+    db.commit()
+
+    return {"msg": "Email successfully verified"}
