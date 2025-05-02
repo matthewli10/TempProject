@@ -1,18 +1,20 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Form, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from auth.database import SessionLocal, engine
-from auth.models import User, Base
+from auth.models import User, Base, Post
 from fastapi.openapi.utils import get_openapi
 from dotenv import load_dotenv
-from auth.schemas import UserCreate
+from auth.schemas import UserCreate, PostCreate, PostResponse
 from auth.jwt_utils import create_email_verification_token, create_access_token, SECRET_KEY, ALGORITHM
 from auth.email_verification import send_verification_email
+from firebase_admin import storage
+from uuid import uuid4
 import os
 
 load_dotenv()
@@ -87,6 +89,12 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
+        )
+    
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before logging in."
         )
 
     token = create_access_token(data={"sub": user.email})
@@ -168,3 +176,51 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"msg": "Email successfully verified"}
+
+# ------------------------ Resend email verification --------------------
+@app.post("/resend-verification")
+def resend_verification(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already verified"
+        )
+
+    token = create_email_verification_token(user.email)
+    send_verification_email(user.email, token)
+
+    return {"msg": "Verification email resent. Please check your inbox."}
+
+
+# ------------------ Create Posts --------------------
+
+@app.post("/posts", response_model=PostResponse)
+def create_post(
+    content: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    media_url = None
+
+    new_post = Post(
+        user_id=current_user.id,
+        content=content,
+        media_url=media_url
+    )
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+
+    return new_post
+
+@app.get("/posts", response_model=List[PostResponse])
+def get_posts(db: Session = Depends(get_db)):
+    return db.query(Post).order_by(Post.timestamp.desc()).all()
