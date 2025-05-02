@@ -5,7 +5,8 @@ from sqlalchemy.ext.declarative import declarative_base
 import uuid
 from datetime import datetime
 import firebase_admin 
-from firebase import credentials, firestone
+from firebase_admin import credentials, firestore
+from sqlalchemy.orm import relationship
 
 
 
@@ -27,8 +28,16 @@ class User(Base):
 """
 This class represents all posts in our app. 
 """
-# class Post(Base):
-#     __tablename__ = ""
+class Post(Base):
+    __tablename__ = "posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    media_url = Column(String, nullable=True)
+
+    user = relationship("User", backref="posts")
 
 # class Account(Base):
 #     __tablename__ = ""
